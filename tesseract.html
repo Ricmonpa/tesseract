@@ -1,0 +1,397 @@
+code Html
+play_circledownloadcontent_copy
+expand_less
+    <!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Del Teseracto a la Mente | WebGL Experience</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000000; font-family: 'Courier New', Courier, monospace; }
+        canvas { display: block; position: absolute; top: 0; left: 0; z-index: 1; }
+        #video-input { display: none; transform: scaleX(-1); }
+        #loading {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: #00ffff; font-size: 1.2rem; text-transform: uppercase; letter-spacing: 0.2em;
+            z-index: 10; pointer-events: none; text-align: center;
+            text-shadow: 0 0 10px #00ffff;
+        }
+        .hud {
+            position: absolute; bottom: 20px; left: 20px; color: rgba(255, 255, 255, 0.5);
+            font-size: 12px; z-index: 5; pointer-events: none;
+        }
+    </style>
+    <!-- MediaPipe Hands & Camera Utils -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+    <div id="loading">Inicializando Neural Link...<br><span style="font-size:0.8em; opacity:0.7">Permite el acceso a la cámara</span></div>
+    <video id="video-input"></video>
+    <div class="hud">SYSTEM: TESSERACT_4D // GESTURE: OPEN (ROTATE) | FIST (DIVE)</div>
+
+    <!-- Three.js & PostProcessing via Import Map -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+        // --- CONFIGURACIÓN ESCENA ---
+        const scene = new THREE.Scene();
+        // Niebla negra profunda para profundidad
+        scene.fog = new THREE.FogExp2(0x000000, 0.03);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.z = 4.5;
+
+        const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        document.body.appendChild(renderer.domElement);
+
+        // --- POST-PROCESADO (BLOOM) ---
+        const renderScene = new RenderPass(scene, camera);
+        
+        // Bloom estilo Cyberpunk: Alto umbral, radio medio, intensidad alta
+        const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
+        bloomPass.threshold = 0;
+        bloomPass.strength = 2.5; // Brillo intenso
+        bloomPass.radius = 0.5;
+
+        const composer = new EffectComposer(renderer);
+        composer.addPass(renderScene);
+        composer.addPass(bloomPass);
+
+        // --- GEOMETRÍA TESERACTO (4D) ---
+        // Creamos miles de partículas. En lugar de un cubo simple, generamos puntos en 4D.
+        const particleCount = 15000;
+        const geometry = new THREE.BufferGeometry();
+        const positions = [];
+        const colors = [];
+        const sizes = [];
+        const hyperCoords = []; // Coordenadas 4D (x, y, z, w)
+
+        const colorPalette = [
+            new THREE.Color('#00ffff'), // Cian
+            new THREE.Color('#bd00ff'), // Violeta
+            new THREE.Color('#0055ff')  // Azul Eléctrico
+        ];
+
+        // Función para verificar si un punto está cerca de los "bordes" de un hipercubo
+        // Un hipercubo unitario va de -1 a 1 en 4 dimensiones.
+        for (let i = 0; i < particleCount; i++) {
+            // Generar punto aleatorio en volumen 4D
+            let x = (Math.random() - 0.5) * 2;
+            let y = (Math.random() - 0.5) * 2;
+            let z = (Math.random() - 0.5) * 2;
+            let w = (Math.random() - 0.5) * 2;
+
+            // "Empujar" puntos hacia los bordes para definir la forma
+            // Si normalizamos mucho, es una hiperesfera. Queremos un hipercubo.
+            // Truco visual: concentrar puntos en las aristas.
+            const axis = Math.floor(Math.random() * 4); 
+            // Fijar algunas coordenadas cerca de 1 o -1 para formar caras/bordes
+            if (Math.random() > 0.3) {
+                if (axis === 0) x = Math.sign(x);
+                else if (axis === 1) y = Math.sign(y);
+                else if (axis === 2) z = Math.sign(z);
+                else w = Math.sign(w);
+            }
+
+            hyperCoords.push(x, y, z, w);
+            positions.push(0, 0, 0); // Placeholder 3D, se calculará en Vertex Shader
+
+            // Color aleatorio de la paleta
+            const col = colorPalette[Math.floor(Math.random() * colorPalette.length)];
+            colors.push(col.r, col.g, col.b);
+
+            sizes.push(Math.random());
+        }
+
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        geometry.setAttribute('aHyper', new THREE.Float32BufferAttribute(hyperCoords, 4));
+        geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+        geometry.setAttribute('size', new THREE.Float32BufferAttribute(sizes, 1));
+
+        // --- SHADER MATERIAL ---
+        // Aquí ocurre la magia de la proyección 4D y la "Explosión"
+        const vertexShader = `
+            uniform float uTime;
+            uniform vec2 uMouse;
+            uniform float uExplosion; // 0 = normal, 1 = exploded
+            uniform float uHover;     // Rotación extra por mano
+
+            attribute vec4 aHyper;
+            attribute vec3 color;
+            attribute float size;
+
+            varying vec3 vColor;
+
+            // Matriz de rotación 4D (Plano XW)
+            mat4 rotateXW(float theta) {
+                float c = cos(theta); float s = sin(theta);
+                return mat4(
+                    c, 0, 0, s,
+                    0, 1, 0, 0,
+                    0, 0, 1, 0,
+                    -s, 0, 0, c
+                );
+            }
+
+            // Matriz de rotación 4D (Plano ZW)
+            mat4 rotateZW(float theta) {
+                float c = cos(theta); float s = sin(theta);
+                return mat4(
+                    1, 0, 0, 0,
+                    0, 1, 0, 0,
+                    0, 0, c, -s,
+                    0, 0, s, c
+                );
+            }
+            
+            // Rotación XY estándar
+            mat4 rotateXY(float theta) {
+                float c = cos(theta); float s = sin(theta);
+                return mat4(
+                    c, -s, 0, 0,
+                    s, c, 0, 0,
+                    0, 0, 1, 0,
+                    0, 0, 0, 1
+                );
+            }
+
+            void main() {
+                vColor = color;
+
+                vec4 p = aHyper;
+
+                // 1. Rotación Base (Automática + Mano)
+                float t = uTime * 0.2;
+                float rotX = uMouse.y * 3.0; // Influencia mano Y
+                float rotY = uMouse.x * 3.0; // Influencia mano X
+
+                // Aplicar rotaciones en 4D
+                p = rotateXW(t + rotX) * p;
+                p = rotateZW(t * 0.7 + rotY) * p;
+                p = rotateXY(t * 0.3) * p;
+
+                // 2. Efecto Explosión "Mente"
+                // Cuando uExplosion aumenta, los puntos se dispersan y vibran
+                float noise = sin(p.x * 10.0 + uTime * 5.0) * cos(p.y * 10.0);
+                vec3 dir = normalize(p.xyz);
+                
+                // Proyección Estereográfica 4D -> 3D
+                // x' = x / (w - distance)
+                float distance = 2.5;
+                float wDiv = 1.0 / (distance - p.w);
+                vec3 pos3D = p.xyz * wDiv;
+
+                // Aplicar explosión: expandir desde el centro y añadir caos
+                vec3 explodedPos = pos3D + (dir * (uExplosion * 8.0)) + (vec3(noise) * uExplosion * 0.5);
+
+                vec4 mvPosition = modelViewMatrix * vec4(explodedPos, 1.0);
+                
+                // Tamaño dinámico
+                float finalSize = size * (20.0 + uExplosion * 30.0) * (1.0 / -mvPosition.z);
+                gl_PointSize = finalSize;
+                gl_Position = projectionMatrix * mvPosition;
+            }
+        `;
+
+        const fragmentShader = `
+            varying vec3 vColor;
+            void main() {
+                // Crear punto circular suave
+                vec2 coord = gl_PointCoord - vec2(0.5);
+                float dist = length(coord);
+                if (dist > 0.5) discard;
+
+                // Gradiente radial para parecer un "brillo" o neurona
+                float alpha = 1.0 - smoothstep(0.0, 0.5, dist);
+                
+                // Boost de brillo en el centro
+                vec3 finalColor = vColor * alpha * 2.0;
+                
+                gl_FragColor = vec4(finalColor, 1.0);
+            }
+        `;
+
+        const material = new THREE.ShaderMaterial({
+            uniforms: {
+                uTime: { value: 0 },
+                uMouse: { value: new THREE.Vector2(0, 0) },
+                uExplosion: { value: 0 }
+            },
+            vertexShader: vertexShader,
+            fragmentShader: fragmentShader,
+            transparent: true,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending
+        });
+
+        const points = new THREE.Points(geometry, material);
+        scene.add(points);
+
+        // --- TEXTURA GENERADA (para fallback visual si falla shader) ---
+        // No usada directamente en shader pero útil si se quiere sprite
+        function createSprite() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 32; canvas.height = 32;
+            const ctx = canvas.getContext('2d');
+            const grad = ctx.createRadialGradient(16,16,0,16,16,16);
+            grad.addColorStop(0, 'rgba(255,255,255,1)');
+            grad.addColorStop(1, 'rgba(0,0,0,0)');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0,0,32,32);
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        // --- LÓGICA DE INTERACCIÓN (ESTADO) ---
+        const state = {
+            targetExplosion: 0,
+            currentExplosion: 0,
+            targetMouseX: 0,
+            targetMouseY: 0,
+            currentMouseX: 0,
+            currentMouseY: 0,
+            cameraZ: 4.5
+        };
+
+        // --- MEDIAPIPE HANDS SETUP ---
+        const videoElement = document.getElementById('video-input');
+        const loadingElement = document.getElementById('loading');
+
+        function onResults(results) {
+            loadingElement.style.display = 'none';
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+                
+                // 1. Control de Rotación (Posición de la mano)
+                // Usamos la muñeca (punto 0) normalizada (0 a 1)
+                // Remapeamos a -1 a 1
+                const handX = (landmarks[0].x - 0.5) * 2; 
+                const handY = (landmarks[0].y - 0.5) * 2;
+                
+                state.targetMouseX = handX;
+                state.targetMouseY = -handY; // Invertir Y
+
+                // 2. Detección de Puño (Zoom / Explosión)
+                // Método simple: Distancia entre la punta del dedo medio (12) y la muñeca (0)
+                // vs Distancia entre nudillo dedo medio (9) y muñeca (0)
+                // Si la punta está cerca del nudillo o muñeca -> Puño
+                
+                const wrist = landmarks[0];
+                const middleTip = landmarks[12];
+                const middleMcp = landmarks[9];
+
+                const distTip = Math.hypot(middleTip.x - wrist.x, middleTip.y - wrist.y);
+                const distMcp = Math.hypot(middleMcp.x - wrist.x, middleMcp.y - wrist.y);
+
+                // Umbral heurístico
+                const isFist = distTip < distMcp * 0.9; // Si la punta está más cerca que el nudillo (relativo)
+
+                if (isFist) {
+                    state.targetExplosion = 1.0;
+                } else {
+                    state.targetExplosion = 0.0;
+                }
+            } else {
+                // Sin manos: reposo
+                state.targetExplosion = 0.0;
+                state.targetMouseX = Math.sin(Date.now() * 0.001) * 0.2; // Idle movement
+                state.targetMouseY = Math.cos(Date.now() * 0.001) * 0.2;
+            }
+        }
+
+        const hands = new Hands({locateFile: (file) => {
+            return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+        }});
+
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.7,
+            minTrackingConfidence: 0.7
+        });
+        hands.onResults(onResults);
+
+        // Inicializar cámara
+        try {
+            const cameraUtils = new Camera(videoElement, {
+                onFrame: async () => {
+                    await hands.send({image: videoElement});
+                },
+                width: 640,
+                height: 480
+            });
+            cameraUtils.start();
+        } catch (e) {
+            console.error("Error iniciando cámara:", e);
+            loadingElement.innerHTML = "ERROR: CÁMARA NO DETECTADA<br>Recarga y asegura permisos";
+            loadingElement.style.color = "#ff0000";
+        }
+
+        // --- ANIMATION LOOP ---
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const elapsedTime = clock.getElapsedTime();
+            material.uniforms.uTime.value = elapsedTime;
+
+            // Interpolación suave (Lerp) para los valores de interacción
+            const lerpFactor = 0.1;
+            
+            // Suavizar posición del ratón/mano
+            state.currentMouseX += (state.targetMouseX - state.currentMouseX) * lerpFactor;
+            state.currentMouseY += (state.targetMouseY - state.currentMouseY) * lerpFactor;
+            material.uniforms.uMouse.value.set(state.currentMouseX, state.currentMouseY);
+
+            // Suavizar explosión
+            // Si es puño (target = 1), lerp rápido para impacto. Si abre (target = 0), más suave.
+            const explosionSpeed = state.targetExplosion > 0.5 ? 0.08 : 0.04;
+            state.currentExplosion += (state.targetExplosion - state.currentExplosion) * explosionSpeed;
+            material.uniforms.uExplosion.value = state.currentExplosion;
+
+            // Mover cámara para efecto "Entrar en la mente"
+            // Posición base Z = 4.5. Al explotar, acercarse mucho (Zoom In)
+            // Cuando explota, vamos hacia Z = 0.5
+            const targetCamZ = 4.5 - (state.currentExplosion * 3.5);
+            camera.position.z += (targetCamZ - camera.position.z) * 0.05;
+
+            // Rotación leve de la cámara para dinamismo
+            camera.rotation.z = Math.sin(elapsedTime * 0.5) * 0.05 * state.currentExplosion;
+
+            composer.render();
+        }
+
+        // --- RESIZE HANDLER ---
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        animate();
+
+    </script>
+</body>
+</html>
+  
