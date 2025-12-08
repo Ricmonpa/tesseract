@@ -2,18 +2,14 @@
   "version": 2,
   "builds": [
     {
-      "src": "tesseract.html",
+      "src": "index.html",
       "use": "@vercel/static"
     }
   ],
   "routes": [
     {
-      "src": "/tesseract.html",
-      "dest": "/tesseract.html"
-    },
-    {
       "src": "/",
-      "dest": "/tesseract.html"
+      "dest": "/index.html"
     }
   ]
 }
