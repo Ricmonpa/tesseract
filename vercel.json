@@ -1,0 +1,20 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "tesseract.html",
+      "use": "@vercel/static"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/tesseract.html",
+      "dest": "/tesseract.html"
+    },
+    {
+      "src": "/",
+      "dest": "/tesseract.html"
+    }
+  ]
+}
+
