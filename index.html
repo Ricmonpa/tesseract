@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visor de Cerebro Holográfico</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #010613;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: white;
+            background: radial-gradient(circle at center, #051a3a 0%, #010613 100%);
+        }
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+        }
+        /* Overlay de mano: puntos y líneas al estilo holográfico del cerebro */
+        #hand-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 5;
+            pointer-events: none;
+            opacity: 0.9;
+        }
+        #hand-overlay canvas {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+        }
+        #ui-container {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 15px;
+            pointer-events: none;
+            z-index: 10;
+        }
+        .panel {
+            background: rgba(4, 15, 30, 0.6);
+            backdrop-filter: blur(10px);
+            padding: 15px 25px;
+            border-radius: 12px;
+            border: 1px solid rgba(0, 150, 255, 0.3);
+            text-align: center;
+            pointer-events: auto;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+        }
+        h1 { margin: 0 0 5px 0; font-size: 1.2rem; color: #44aaff; text-transform: uppercase; letter-spacing: 2px; }
+        p { margin: 0 0 15px 0; font-size: 0.9rem; color: #88bbff; }
+        
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 1.5rem;
+            color: #00ffff;
+            animation: pulse 1.5s infinite;
+            text-shadow: 0 0 10px rgba(0, 255, 255, 0.5);
+            text-align: center;
+        }
+        @keyframes pulse {
+            0% { opacity: 0.5; transform: translate(-50%, -50%) scale(0.98); }
+            50% { opacity: 1; transform: translate(-50%, -50%) scale(1.02); }
+            100% { opacity: 0.5; transform: translate(-50%, -50%) scale(0.98); }
+        }
+    </style>
+    <!-- MediaPipe Hands (para control por cámara) -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+    <div id="loading">
+        Cargando "brain_hologram.glb"...<br>
+    </div>
+    <!-- Video oculto; canvas visible con puntos y líneas en la mano (estilo cerebro) -->
+    <video id="webcam-video" autoplay playsinline style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;"></video>
+    <div id="hand-overlay">
+        <canvas id="webcam-canvas"></canvas>
+    </div>
+    <div id="canvas-container"></div>
+    <div id="xr-buttons" style="position:absolute;top:15px;right:15px;display:flex;gap:8px;z-index:20;"></div>
+    <div id="ui-container">
+        <div class="panel">
+            <h1>Cerebro Importado</h1>
+            <p>Touch: 1 dedo rotar · 2 dedos pan · pellizco zoom. Cámara: mano en aire rota/zoom.</p>
+        </div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { VRButton } from 'three/addons/webxr/VRButton.js';
+        import { ARButton } from 'three/addons/webxr/ARButton.js';
+
+        let scene, camera, renderer, controls;
+        let visualGroup, particleSystem;
+        let handTargetRotX = 0, handTargetRotY = 0, handTargetScale = 1;
+        let handCurrentRotX = 0, handCurrentRotY = 0, handCurrentScale = 1;
+        let mediaPipeReady = false;
+
+        init();
+        animate();
+
+        function init() {
+            const container = document.getElementById('canvas-container');
+
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x010613, 0.08);
+
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+            camera.position.set(0, 0, 4);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            container.appendChild(renderer.domElement);
+
+            // ——— OrbitControls: optimizado para touch ———
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.autoRotate = true;
+            controls.autoRotateSpeed = 1.0;
+            controls.enablePan = true;
+            controls.enableZoom = true;
+            controls.enableRotate = true;
+            controls.panSpeed = 0.8;
+            controls.rotateSpeed = 0.8;
+            controls.zoomSpeed = 1.2;
+            controls.minDistance = 0.02;
+            controls.maxDistance = 500;
+            controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
+            renderer.domElement.style.touchAction = 'none';
+
+            // ——— WebXR (VR/AR opcional) ———
+            renderer.xr.enabled = true;
+            const vrBtn = VRButton.createButton(renderer);
+            vrBtn.title = 'Abrir en visor VR';
+            document.getElementById('xr-buttons').appendChild(vrBtn);
+            const arBtn = ARButton.createButton(renderer, { optionalFeatures: ['hand-tracking'] });
+            arBtn.title = 'Abrir en Realidad Aumentada';
+            document.getElementById('xr-buttons').appendChild(arBtn);
+
+            cargarModeloCerebro();
+            generarParticulas();
+            iniciarMediaPipeHands();
+
+            window.addEventListener('resize', onWindowResize);
+        }
+
+        function cargarModeloCerebro() {
+            visualGroup = new THREE.Group();
+            scene.add(visualGroup);
+
+            // --- MATERIALES ESTILO PLEXUS/RED NEURONAL ---
+            const materialNucleo = new THREE.MeshBasicMaterial({
+                color: 0x031025,
+                transparent: true,
+                opacity: 0.95,
+                side: THREE.DoubleSide
+            });
+
+            const materialWireframe = new THREE.LineBasicMaterial({
+                color: 0x2288ff,
+                transparent: true,
+                opacity: 0.3, // Opacidad sutil para que los nodos destaquen
+                blending: THREE.AdditiveBlending,
+                depthWrite: false
+            });
+
+            const materialPuntos = new THREE.PointsMaterial({
+                color: 0x88ffff,
+                size: 0.04, // Tamaño de los nodos luminosos
+                transparent: true,
+                opacity: 0.9,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false
+            });
+
+            // CARGADOR DE ARCHIVOS GLTF/GLB
+            const loader = new GLTFLoader();
+            
+            // RUTA DEL ARCHIVO: Usamos el nombre exacto de tu archivo
+            const rutaModelo = 'brain_hologram.glb'; 
+
+            try {
+                loader.load(
+                    rutaModelo,
+                    function (gltf) {
+                        // Ocultar mensaje de carga
+                        document.getElementById('loading').style.display = 'none';
+
+                        // Extraer la geometría del archivo importado
+                        gltf.scene.traverse(function (child) {
+                            if (child.isMesh) {
+                                // Aplicar transformaciones al objeto original para obtener la geometría final
+                                child.updateMatrixWorld();
+                                const geometria = child.geometry.clone();
+                                geometria.applyMatrix4(child.matrixWorld);
+
+                                // 1. Capa de Núcleo (fondo oscuro)
+                                const nucleo = new THREE.Mesh(geometria, materialNucleo);
+                                nucleo.scale.setScalar(0.99); // Ligeramente más pequeño para no tapar líneas
+                                
+                                // 2. Capa Wireframe (líneas de red)
+                                const edges = new THREE.WireframeGeometry(geometria);
+                                const lineas = new THREE.LineSegments(edges, materialWireframe);
+
+                                // 3. Capa Nodos (puntos luminosos)
+                                const nodos = new THREE.Points(geometria, materialPuntos);
+
+                                // Añadir todo a la escena
+                                visualGroup.add(nucleo);
+                                visualGroup.add(lineas);
+                                visualGroup.add(nodos);
+                            }
+                        });
+
+                        // Centrar y escalar automáticamente el modelo importado sin importar su tamaño original
+                        const box = new THREE.Box3().setFromObject(visualGroup);
+                        const center = box.getCenter(new THREE.Vector3());
+                        const size = box.getSize(new THREE.Vector3());
+                        const maxDim = Math.max(size.x, size.y, size.z);
+                        
+                        // Ajustar la cámara para que el modelo siempre quepa perfecto en la pantalla
+                        const fov = camera.fov * (Math.PI / 180);
+                        let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
+                        cameraZ *= 2.0; // Factor de zoom
+                        camera.position.z = cameraZ;
+
+                        // Centrar en el origen (0,0,0)
+                        visualGroup.position.x = -center.x;
+                        visualGroup.position.y = -center.y;
+                        visualGroup.position.z = -center.z;
+                    },
+                    function (xhr) {
+                        // Progreso de carga
+                        if (xhr.total > 0) {
+                            const percent = Math.round((xhr.loaded / xhr.total) * 100);
+                            document.getElementById('loading').innerHTML = `Cargando modelo... ${percent}%`;
+                        }
+                    },
+                    function (error) {
+                        console.error('Error al cargar el modelo:', error);
+                        document.getElementById('loading').innerHTML = 
+                            '<span style="color:#ff8888;">No se puede cargar el .glb por CORS (abriste con file://)</span><br><br>' +
+                            '<span style="font-size:1rem; color:#88bbff;">En la terminal de Cursor, en la carpeta del proyecto, ejecuta:</span><br>' +
+                            '<code style="background:rgba(0,0,0,0.4);padding:8px 12px;display:inline-block;margin:10px 0;border-radius:6px;">npx serve . -p 3000</code><br>' +
+                            '<span style="font-size:0.95rem; color:#aaffaa;">Luego abre en el navegador: <strong>http://localhost:3000</strong></span>';
+                        document.getElementById('loading').style.animation = 'none';
+                    }
+                );
+            } catch (e) {
+                console.warn('Entorno sin acceso a archivos locales detectado.');
+                document.getElementById('loading').innerHTML = 
+                    'Usa un servidor local. En terminal: <code>npx serve . -p 3000</code><br>Luego abre <strong>http://localhost:3000</strong>';
+                document.getElementById('loading').style.animation = 'none';
+            }
+        }
+
+        // Sistema de partículas (Fondo estelar)
+        function generarParticulas() {
+            const particleCount = 2000;
+            const particleGeo = new THREE.BufferGeometry();
+            const particlePos = new Float32Array(particleCount * 3);
+
+            for(let i = 0; i < particleCount; i++) {
+                let r = 2.0 + Math.random() * 3.0;
+                let theta = Math.random() * 2 * Math.PI;
+                let phi = Math.acos(2 * Math.random() - 1);
+
+                particlePos[i*3] = r * Math.sin(phi) * Math.cos(theta);
+                particlePos[i*3+1] = r * Math.sin(phi) * Math.sin(theta);
+                particlePos[i*3+2] = r * Math.cos(phi);
+            }
+
+            particleGeo.setAttribute('position', new THREE.BufferAttribute(particlePos, 3));
+            const particleMat = new THREE.PointsMaterial({
+                color: 0x44ddff, size: 0.05, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending
+            });
+
+            particleSystem = new THREE.Points(particleGeo, particleMat);
+            scene.add(particleSystem);
+        }
+
+        // ——— MediaPipe Hands: mano en aire → rotación; abrir/cerrar dedos → zoom ———
+        function iniciarMediaPipeHands() {
+            const video = document.getElementById('webcam-video');
+            const canvas = document.getElementById('webcam-canvas');
+            if (!video || !canvas) return;
+            const ctx = canvas.getContext('2d');
+
+            const hands = new Hands({
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+            });
+            hands.setOptions({
+                maxNumHands: 1,
+                modelComplexity: 1,
+                minDetectionConfidence: 0.7,
+                minTrackingConfidence: 0.7
+            });
+            hands.onResults((results) => {
+                ctx.save();
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                    const lm = results.multiHandLandmarks[0];
+                    handTargetRotY = (lm[9].x - 0.5) * Math.PI * 2;
+                    handTargetRotX = (lm[9].y - 0.5) * Math.PI * 1.5;
+                    const pinch = Math.hypot(lm[4].x - lm[8].x, lm[4].y - lm[8].y);
+                    handTargetScale = Math.max(0.2, Math.min(8, pinch * 4));
+                    mediaPipeReady = true;
+                    if (typeof drawConnectors === 'function' && typeof drawLandmarks === 'function' && typeof HAND_CONNECTIONS !== 'undefined') {
+                        drawConnectors(ctx, lm, HAND_CONNECTIONS, { color: 'rgba(136, 255, 255, 0.5)', lineWidth: 2 });
+                        drawLandmarks(ctx, lm, { color: '#ffffff', lineWidth: 1, radius: 3 });
+                    }
+                }
+                ctx.restore();
+            });
+
+            try {
+                const cam = new Camera(video, {
+                    onFrame: async () => {
+                        if (canvas.width !== video.videoWidth) {
+                            canvas.width = video.videoWidth;
+                            canvas.height = video.videoHeight;
+                        }
+                        await hands.send({ image: video });
+                    },
+                    width: 640,
+                    height: 480
+                });
+                cam.start();
+            } catch (e) {
+                console.warn('MediaPipe Hands no disponible:', e);
+            }
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const dt = 0.08;
+            handCurrentRotX += (handTargetRotX - handCurrentRotX) * dt;
+            handCurrentRotY += (handTargetRotY - handCurrentRotY) * dt;
+            handCurrentScale += (handTargetScale - handCurrentScale) * dt;
+            if (visualGroup) {
+                visualGroup.rotation.x = handCurrentRotX;
+                visualGroup.rotation.y = handCurrentRotY;
+                visualGroup.scale.setScalar(handCurrentScale);
+            }
+            controls.enabled = !renderer.xr.isPresenting;
+            if (controls.enabled) controls.update();
+            if (particleSystem) particleSystem.rotation.y += 0.001;
+            renderer.render(scene, camera);
+        }
+    </script>
+</body>
+</html>
