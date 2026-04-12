@@ -16,12 +16,12 @@
   ],
   "routes": [
     {
-      "src": "/",
-      "dest": "/index.html"
+      "src": "/tesseract",
+      "dest": "/tesseract.html"
     },
     {
-      "src": "/tesseract.html",
-      "dest": "/tesseract.html"
+      "src": "/",
+      "dest": "/index.html"
     }
   ]
 }
